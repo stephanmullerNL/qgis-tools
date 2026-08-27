@@ -1,27 +1,26 @@
 r"""
-Jaarrond beschermde vogels binnen straal (Processing-tool).
+NDFF: Jaarrond beschermde vogels binnen straal (Processing-tool).
 
-Trekt uit een reeds gecategoriseerde vogellaag een ontdubbelde uitdraai:
-- alle soorten binnen een gekozen straal (bv. 1000 of 2000 m) van het projectgebied
-- alleen de categorieen die jaarrond beschermd zijn (default 1,2,3,4)
-- output: een CSV (soort;categorie) en een kopieerbaar tekstblok in de log
+Trekt uit een gecategoriseerde vogellaag (ow_cat-veld) een ontdubbelde lijst:
+- alle soorten binnen een gekozen straal van het projectgebied
+- alleen jaarrond beschermde categorieen (default 1,2,3,4)
+- optioneel gefilterd op gedrag (overvliegers) en telonderwerp (dode dieren)
 
-Vereist dat de vogellaag al een categorie-veld heeft (bv. ow_cat), aangemaakt met
-de tool 'Vogels categoriseren + symboliseren'.
+Output: CSV (soort;categorie) en kopieerbaar tekstblok in de log.
+Vereist dat de vogellaag al gecategoriseerd is met "NDFF Vogels categoriseren".
 
-Verschijnt in de Verwerkingstoolbox onder Scripts > Ecologie.
-Installeren: zet dit bestand in
+Verschijnt onder Scripts > NDFF-analyse. Installeren: bestand in
   ...\QGIS3\profiles\default\processing\scripts\
-en ververs de toolbox.
+en toolbox verversen.
 """
 
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingParameterVectorLayer,
-    QgsProcessingParameterField,
     QgsProcessingParameterDistance,
     QgsProcessingParameterString,
+    QgsProcessingParameterBoolean,
     QgsProcessingParameterFileDestination,
     QgsProcessingException,
     QgsGeometry,
@@ -32,65 +31,54 @@ from qgis.core import (
 )
 
 
-class JaarrondVogelsBinnenStraalAlgorithm(QgsProcessingAlgorithm):
+class JaarrondVogelsBinnenStraalalgorithm(QgsProcessingAlgorithm):
 
     BIRDS = 'BIRDS'
     PROJECT_AREA = 'PROJECT_AREA'
-    CATEGORY_FIELD = 'CATEGORY_FIELD'
-    SPECIES_FIELD = 'SPECIES_FIELD'
     RADIUS = 'RADIUS'
     JAARROND_CATS = 'JAARROND_CATS'
-    BEHAVIOR_FIELD = 'BEHAVIOR_FIELD'
-    EXCLUDE_TERMS = 'EXCLUDE_TERMS'
-    TELONDERWERP_FIELD = 'TELONDERWERP_FIELD'
-    TELONDERWERP_TERMS = 'TELONDERWERP_TERMS'
+    EXCLUDE_DEAD = 'EXCLUDE_DEAD'
+    EXCLUDE_FLYING = 'EXCLUDE_FLYING'
     OUTPUT = 'OUTPUT'
+
+    # Vaste instellingen
+    CATEGORY_FIELD = 'ow_cat'
+    SPECIES_FIELD = 'soort_ned'
+    BEHAVIOR_FIELD = 'gedrag'
+    TELONDERWERP_FIELD = 'telondrwrp'
 
     def tr(self, s):
         return QCoreApplication.translate('Processing', s)
 
     def createInstance(self):
-        return JaarrondVogelsBinnenStraalAlgorithm()
+        return JaarrondVogelsBinnenStraalalgorithm()
 
     def name(self):
         return 'jaarrond_vogels_binnen_straal'
 
     def displayName(self):
-        return self.tr('Jaarrond beschermde vogels binnen straal')
+        return self.tr('NDFF: Jaarrond beschermde vogels binnen straal')
 
     def group(self):
-        return self.tr('Ecologie')
+        return self.tr('NDFF-analyse')
 
     def groupId(self):
-        return 'ecologie'
+        return 'ndff_analyse'
 
     def shortHelpString(self):
         return self.tr(
-            'Maakt een CSV van jaarrond beschermde vogelsoorten binnen een gekozen '
-            'straal van het projectgebied, plus een kopieerbaar tekstblok in de log. '
-            'Werkt op een laag die al een categorie-veld heeft (bv. ow_cat). Kies de '
-            'straal (1000 m = 1 km, 2000 m bij zware werkzaamheden) en welke '
-            'categorieen jaarrond beschermd zijn. Let op: dat verschilt per provincie '
-            '-- Landelijk/Drenthe/Friesland 1,2,3,4; Flevoland 1,2,3,4,5a; '
-            'Gelderland/Overijssel alleen 1; Limburg 1. Filtert standaard '
-            'overvliegers (gedrag) en dode exemplaren (telonderwerp) weg; beide '
-            'instelbaar of leeg te laten.'
+            'Geeft een lijst van jaarrond beschermde vogels in een straal van het projectgebied. '
+            'Output: CSV en plakbare tabel in het log. Filtert standaard dode dieren en overvliegers uit.'
+            ''
+            'Zorg eerst dat de laag is gecategoriseerd met "NDFF Vogels categoriseren"'
         )
 
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterVectorLayer(
-            self.BIRDS, self.tr('Gecategoriseerde vogellaag')))
+            self.BIRDS, self.tr('Gecategoriseerde vogellaag (ow_cat-veld)')))
 
         self.addParameter(QgsProcessingParameterVectorLayer(
             self.PROJECT_AREA, self.tr('Projectgebied (vlak)')))
-
-        self.addParameter(QgsProcessingParameterField(
-            self.CATEGORY_FIELD, self.tr('Categorie-veld'),
-            parentLayerParameterName=self.BIRDS, defaultValue='ow_cat'))
-
-        self.addParameter(QgsProcessingParameterField(
-            self.SPECIES_FIELD, self.tr('Soortveld'),
-            parentLayerParameterName=self.BIRDS, defaultValue='soort_ned'))
 
         self.addParameter(QgsProcessingParameterDistance(
             self.RADIUS, self.tr('Straal rond projectgebied'),
@@ -100,21 +88,13 @@ class JaarrondVogelsBinnenStraalAlgorithm(QgsProcessingAlgorithm):
             self.JAARROND_CATS, self.tr('Jaarrond beschermde categorieen (kommagescheiden)'),
             defaultValue='1,2,3,4'))
 
-        self.addParameter(QgsProcessingParameterField(
-            self.BEHAVIOR_FIELD, self.tr('Gedrag-veld'),
-            parentLayerParameterName=self.BIRDS, defaultValue='gedrag', optional=True))
+        self.addParameter(QgsProcessingParameterBoolean(
+            self.EXCLUDE_DEAD, self.tr('Negeer dode dieren'),
+            defaultValue=True))
 
-        self.addParameter(QgsProcessingParameterString(
-            self.EXCLUDE_TERMS, self.tr('Uit te sluiten gedrag-termen (kommagescheiden)'),
-            defaultValue='overvliegend'))
-
-        self.addParameter(QgsProcessingParameterField(
-            self.TELONDERWERP_FIELD, self.tr('Telonderwerp-veld'),
-            parentLayerParameterName=self.BIRDS, defaultValue='telonderwrp', optional=True))
-
-        self.addParameter(QgsProcessingParameterString(
-            self.TELONDERWERP_TERMS, self.tr('Uit te sluiten telonderwerp-termen (kommagescheiden)'),
-            defaultValue='dood exemplaar'))
+        self.addParameter(QgsProcessingParameterBoolean(
+            self.EXCLUDE_FLYING, self.tr('Negeer overvliegende dieren'),
+            defaultValue=True))
 
         self.addParameter(QgsProcessingParameterFileDestination(
             self.OUTPUT, self.tr('Uitvoer-CSV'),
@@ -123,51 +103,38 @@ class JaarrondVogelsBinnenStraalAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, feedback):
         birds = self.parameterAsVectorLayer(parameters, self.BIRDS, context)
         area = self.parameterAsVectorLayer(parameters, self.PROJECT_AREA, context)
-        cat_field = self.parameterAsString(parameters, self.CATEGORY_FIELD, context)
-        species_field = self.parameterAsString(parameters, self.SPECIES_FIELD, context)
         radius = self.parameterAsDouble(parameters, self.RADIUS, context)
         cats_raw = self.parameterAsString(parameters, self.JAARROND_CATS, context)
-        behavior_field = self.parameterAsString(parameters, self.BEHAVIOR_FIELD, context)
-        exclude_raw = self.parameterAsString(parameters, self.EXCLUDE_TERMS, context)
-        telonderwerp_field = self.parameterAsString(parameters, self.TELONDERWERP_FIELD, context)
-        telonderwerp_raw = self.parameterAsString(parameters, self.TELONDERWERP_TERMS, context)
+        exclude_dead = self.parameterAsBool(parameters, self.EXCLUDE_DEAD, context)
+        exclude_flying = self.parameterAsBool(parameters, self.EXCLUDE_FLYING, context)
         csv_path = self.parameterAsFileOutput(parameters, self.OUTPUT, context)
 
-        if birds.fields().indexFromName(cat_field) == -1:
+        # Controleer of ow_cat-veld bestaat
+        if birds.fields().indexFromName(self.CATEGORY_FIELD) == -1:
             raise QgsProcessingException(
-                'Veld "{}" ontbreekt. Draai eerst "Vogels categoriseren + symboliseren".'.format(cat_field))
+                'Veld "{}" ontbreekt. Draai eerst "NDFF Vogels categoriseren" op deze laag.'.format(
+                    self.CATEGORY_FIELD))
 
         jaarrond = {c.strip() for c in cats_raw.split(',') if c.strip()}
         if not jaarrond:
             raise QgsProcessingException('Geen categorieen opgegeven.')
         feedback.pushInfo('Jaarrond-categorieen: {}'.format(', '.join(sorted(jaarrond))))
 
-        # Bouw de weglaat-filters op: (veldnaam, [termen]). Ontbreekt het veld, dan waarschuwen en overslaan.
-        def build_filter(field_name, raw, label):
-            if not field_name:
-                return None
-            terms = [t.strip().lower() for t in raw.split(',') if t.strip()]
-            if not terms:
-                return None
-            if birds.fields().indexFromName(field_name) == -1:
-                feedback.pushWarning('{}-veld "{}" niet gevonden; dit filter wordt overgeslagen.'.format(
-                    label, field_name))
-                return None
-            feedback.pushInfo('{}-filter op "{}": sluit uit wat bevat: {}'.format(
-                label, field_name, ', '.join(terms)))
-            return (field_name, terms)
-
-        filters = [f for f in (
-            build_filter(behavior_field, exclude_raw, 'Gedrag'),
-            build_filter(telonderwerp_field, telonderwerp_raw, 'Telonderwerp'),
-        ) if f is not None]
+        # Filters samenstellen
+        filters = []
+        if exclude_dead and birds.fields().indexFromName(self.TELONDERWERP_FIELD) != -1:
+            filters.append((self.TELONDERWERP_FIELD, ['dood exemplaar']))
+            feedback.pushInfo('Filter: sluit dode dieren uit ({})'.format(self.TELONDERWERP_FIELD))
+        if exclude_flying and birds.fields().indexFromName(self.BEHAVIOR_FIELD) != -1:
+            filters.append((self.BEHAVIOR_FIELD, ['overvliegend']))
+            feedback.pushInfo('Filter: sluit overvliegers uit ({})'.format(self.BEHAVIOR_FIELD))
 
         if birds.crs().isGeographic():
             feedback.pushWarning(
-                'Vogellaag-CRS is geografisch (graden); een straal in meters klopt dan niet. '
-                'Gebruik een metrisch CRS zoals RD New (EPSG:28992).')
+                'Vogellaag-CRS is geografisch (graden); straal in meters klopt dan niet. '
+                'Gebruik RD New (EPSG:28992).')
 
-        # Projectgebied verzamelen, indien nodig transformeren naar CRS van de vogels, en bufferen
+        # Projectgebied ophalen, transformeren, bufferen
         transform = None
         if area.crs() != birds.crs():
             transform = QgsCoordinateTransform(area.crs(), birds.crs(), QgsProject.instance())
@@ -184,25 +151,30 @@ class JaarrondVogelsBinnenStraalAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException('Het projectgebied heeft geen geometrie.')
         buffer = QgsGeometry.unaryUnion(geoms).buffer(radius, 24)
 
-        # Vogels binnen de buffer, in een jaarrond-categorie, ontdubbeld op (soort, categorie)
+        # Verzamel jaarrond beschermde vogels within buffer
         req = QgsFeatureRequest().setFilterRect(buffer.boundingBox())
         seen = set()
         rows = []
-        species_any = set()   # soorten met een jaarrond-waarneming binnen de straal (voor het filter)
+        species_any = set()
         n_excluded = 0
+
         for feat in birds.getFeatures(req):
             g = feat.geometry()
             if g is None or g.isEmpty() or not buffer.intersects(g):
                 continue
-            cval = feat[cat_field]
+            
+            # Check categorie
+            cval = feat[self.CATEGORY_FIELD]
             cat = '' if cval is None or cval == NULL else str(cval).strip()
             if cat not in jaarrond:
                 continue
-            sval = feat[species_field]
+            
+            # Soort
+            sval = feat[self.SPECIES_FIELD]
             soort = '' if sval is None or sval == NULL else str(sval).strip()
             species_any.add(soort)
 
-            # Weglaat-filters (gedrag = overvliegend, telonderwerp = dood exemplaar, ...)
+            # Filters toepassen
             excluded = False
             for fname, terms in filters:
                 val = feat[fname]
@@ -214,6 +186,7 @@ class JaarrondVogelsBinnenStraalAlgorithm(QgsProcessingAlgorithm):
                 n_excluded += 1
                 continue
 
+            # Ontdubbelen op (soort, categorie)
             key = (soort, cat)
             if key in seen:
                 continue
@@ -221,17 +194,15 @@ class JaarrondVogelsBinnenStraalAlgorithm(QgsProcessingAlgorithm):
             rows.append((soort, cat))
 
         rows.sort(key=lambda r: r[0].lower())
-
-        # Soorten die volledig wegvielen doordat al hun waarnemingen overvliegers waren
         dropped = sorted(species_any - {r[0] for r in rows}, key=str.lower)
 
-        # CSV wegschrijven (puntkomma, met BOM zodat Excel-NL het goed opent)
+        # CSV schrijven
         with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
             f.write('soort;categorie\n')
             for soort, cat in rows:
                 f.write('{};{}\n'.format(soort, cat))
 
-        # Kopieerbaar blok in de log (tab-gescheiden -> plakt als kolommen in Word/Excel)
+        # Output in log
         feedback.pushInfo('')
         feedback.pushInfo('--- Kopieerbaar (soort <tab> categorie) ---')
         feedback.pushInfo('Soort\tCategorie')
@@ -241,10 +212,8 @@ class JaarrondVogelsBinnenStraalAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo('')
         feedback.pushInfo('{} jaarrond beschermde soorten binnen {:.0f} m.'.format(len(rows), radius))
         if filters:
-            feedback.pushInfo('{} waarnemingen weggefilterd (gedrag/telonderwerp).'.format(n_excluded))
+            feedback.pushInfo('{} waarnemingen gefilterd (dood/overvliegend).'.format(n_excluded))
             if dropped:
-                feedback.pushWarning(
-                    'Soorten volledig weggevallen door de filters (even controleren): {}'.format(
-                        ', '.join(dropped)))
+                feedback.pushWarning('Soorten volledig weggefilterd: {}'.format(', '.join(dropped)))
 
         return {self.OUTPUT: csv_path}
