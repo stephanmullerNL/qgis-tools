@@ -23,7 +23,6 @@ from qgis.core import (
     QgsProcessingParameterVectorLayer,
     QgsProcessingParameterDistance,
     QgsProcessingParameterEnum,
-    QgsProcessingParameterField,
     QgsProcessingException,
     QgsGeometry,
     QgsCoordinateTransform,
@@ -39,6 +38,9 @@ class NdffSoortenInProjectgebiedAlgorithm(QgsProcessingAlgorithm):
     BUFFER_DIST = 'BUFFER_DIST'
     CATEGORY_FIELD = 'CATEGORY_FIELD'
     SORT_BY = 'SORT_BY'
+    
+    CATEGORY_OPTIONS = ['Vogels (ow_cat)', 'Niet-vogels (srtgroepen)']
+    CATEGORY_FIELDS = {'Vogels (ow_cat)': 'ow_cat', 'Niet-vogels (srtgroepen)': 'srtgroepen'}
 
     def tr(self, s):
         return QCoreApplication.translate('Processing', s)
@@ -60,13 +62,9 @@ class NdffSoortenInProjectgebiedAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr(
-            'Toont per soort de dichtste waarneming in het projectgebied en in een buffer eromheen, '
-            'gegroepeerd per categorie (bijv. soortgroep of beschermingscategorie). '
-            'Output in log als tab-gescheiden tekst — direct plakbaar in Excel/Word. '
-            'Vereist NDFF-laag met velden soort_ned en datm_start.'
-            ''
-            'Voor vogels gegroepeerd op beschermingsstatus, draai eerst "NDFF Vogels Categoriseren" en'
-            'sorteer op "ow_cat" (onderste in de dropdown)'
+            'Geeft per soort de dichtste waarneming in het projectgebied en buffer, '
+            'gegroepeerd per categorie (vogels of niet-vogels). '
+            'Output: plakbare tabel in het log.'
         )
 
     def initAlgorithm(self, config=None):
@@ -82,14 +80,12 @@ class NdffSoortenInProjectgebiedAlgorithm(QgsProcessingAlgorithm):
             self.BUFFER_DIST, self.tr('Buffer rond projectgebied'),
             defaultValue=2000, minValue=0, parentParameterName=self.PROJECT_AREA))
         
-        self.addParameter(QgsProcessingParameterField(
-            self.CATEGORY_FIELD, self.tr('Categorie-veld (voor groepering)'),
-            parentLayerParameterName=self.NDFF, 
-            defaultValue='soortgroep',
-            optional=True))
+        self.addParameter(QgsProcessingParameterEnum(
+            self.CATEGORY_FIELD, self.tr('Groepering'),
+            options=self.CATEGORY_OPTIONS, defaultValue=0))
         
         self.addParameter(QgsProcessingParameterEnum(
-            self.SORT_BY, self.tr('Sorteren op (binnen elke categorie)'),
+            self.SORT_BY, self.tr('Sorteren op'),
             options=[self.tr('Soortnaam (A-Z)'), self.tr('Afstand (dichtste eerst)')],
             defaultValue=0))
 
@@ -97,8 +93,11 @@ class NdffSoortenInProjectgebiedAlgorithm(QgsProcessingAlgorithm):
         ndff = self.parameterAsVectorLayer(parameters, self.NDFF, context)
         area = self.parameterAsVectorLayer(parameters, self.PROJECT_AREA, context)
         buffer_dist = self.parameterAsDouble(parameters, self.BUFFER_DIST, context)
-        category_field = self.parameterAsString(parameters, self.CATEGORY_FIELD, context)
+        category_choice = self.parameterAsEnum(parameters, self.CATEGORY_FIELD, context)
         sort_by = self.parameterAsInt(parameters, self.SORT_BY, context)  # 0=naam, 1=afstand
+        
+        # Zet enum-keuze om naar veldnaam
+        category_field = self.CATEGORY_FIELDS[self.CATEGORY_OPTIONS[category_choice]]
         
         # Controleer of categorie-veld bestaat
         use_categories = False
