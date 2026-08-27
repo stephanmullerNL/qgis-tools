@@ -124,7 +124,7 @@ class VogelsCategoriserenAlgorithm(QgsProcessingAlgorithm):
         return 'vogels_categoriseren'
 
     def displayName(self):
-        return self.tr('NDFF vogels categoriseren + symboliseren')
+        return self.tr('NDFF: vogels categoriseren + symboliseren')
 
     def group(self):
         return self.tr('NDFF-analyse')
