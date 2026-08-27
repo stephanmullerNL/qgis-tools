@@ -97,7 +97,8 @@ class NdffSoortenInProjectgebiedAlgorithm(QgsProcessingAlgorithm):
         sort_by = self.parameterAsInt(parameters, self.SORT_BY, context)  # 0=naam, 1=afstand
         
         # Zet enum-keuze om naar veldnaam
-        category_field = self.CATEGORY_FIELDS[self.CATEGORY_OPTIONS[category_choice]]
+        category_choice_label = self.CATEGORY_OPTIONS[category_choice]
+        category_field = self.CATEGORY_FIELDS[category_choice_label]
         
         # Controleer of categorie-veld bestaat
         use_categories = False
