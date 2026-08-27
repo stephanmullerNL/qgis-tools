@@ -1,11 +1,14 @@
 r"""
-Vogels categoriseren + symboliseren (zwaartepunten) - Processing-tool.
+Vogels categoriseren + symboliseren - Processing-tool (vereenvoudigd).
 
-Neemt een NDFF-vogellaag (locatievlakken), maakt er zwaartepunten van, kent per
-waarnemer de provinciale beschermingscategorie toe uit de lookup-CSV, en zet er
-symbologie op (categorie = groep, soort eronder). Levert een nieuwe puntlaag op.
+Neemt een NDFF-vogellaag (locatievlakken), maakt er zwaartepunten van, kent de 
+provinciale beschermingscategorie toe uit de lookup-CSV, en zet er symbologie op.
+Levert een nieuwe puntlaag "NDFF Vogels (gecategoriseerd)" op.
 
-Verschijnt onder Scripts > Ecologie. Installeren: bestand in
+Versimpelde interface: kies alleen provincie en waar op te slaan.
+Vaste instellingen: soort_ned, ow_cat, willekeurige kleuren, seed=-1.
+
+Verschijnt onder Scripts > NDFF-analyse. Installeren: bestand in
   ...\QGIS3\profiles\default\processing\scripts\
 en toolbox verversen.
 """
@@ -19,11 +22,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterFile,
-    QgsProcessingParameterField,
     QgsProcessingParameterEnum,
-    QgsProcessingParameterString,
-    QgsProcessingParameterBoolean,
-    QgsProcessingParameterNumber,
     QgsProcessingParameterFeatureSink,
     QgsProcessingException,
     QgsProcessingLayerPostProcessorInterface,
@@ -38,7 +37,8 @@ from qgis.core import (
 )
 
 
-def _build_symbology(layer, group_field, species_field, color_mode, seed):
+def _build_symbology(layer, group_field, species_field, seed):
+    """Bouw symbologie op basis van categorieën (groep) en soorten."""
     if seed != -1:
         random.seed(seed)
 
@@ -53,15 +53,6 @@ def _build_symbology(layer, group_field, species_field, color_mode, seed):
     def random_color():
         return QColor.fromHsv(random.randint(0, 359), random.randint(150, 230), random.randint(180, 240))
 
-    def group_color(gi, ng):
-        return QColor.fromHsv(int(360 * gi / max(ng, 1)), 200, 230)
-
-    def shade_color(gi, ng, si, ns):
-        base = 360 * gi / max(ng, 1)
-        band = 70
-        hue = base if ns <= 1 else base - band / 2 + band * si / (ns - 1)
-        return QColor.fromHsv(int(hue % 360), 200, 230)
-
     def sql_eq(field, value):
         return '"{}" = \'{}\''.format(field, str(value).replace("'", "''"))
 
@@ -74,12 +65,7 @@ def _build_symbology(layer, group_field, species_field, color_mode, seed):
         species = sorted(groups[g])
         for si, s in enumerate(species):
             sym = QgsSymbol.defaultSymbol(layer.geometryType())
-            if color_mode == 0:
-                sym.setColor(random_color())
-            elif color_mode == 1:
-                sym.setColor(group_color(gi, len(group_names)))
-            else:
-                sym.setColor(shade_color(gi, len(group_names), si, len(species)))
+            sym.setColor(random_color())
             child = QgsRuleBasedRenderer.Rule(sym)
             child.setLabel(str(s))
             child.setFilterExpression(sql_eq(species_field, s))
@@ -94,16 +80,17 @@ def _build_symbology(layer, group_field, species_field, color_mode, seed):
 
 
 class _Styler(QgsProcessingLayerPostProcessorInterface):
-    def __init__(self, group_field, species_field, color_mode, seed):
+    """Pas symbologie toe na laag laden."""
+    def __init__(self, group_field, species_field, seed):
         super().__init__()
         self.group_field = group_field
         self.species_field = species_field
-        self.color_mode = color_mode
         self.seed = seed
 
     def postProcessLayer(self, layer, context, feedback):
         try:
-            _build_symbology(layer, self.group_field, self.species_field, self.color_mode, self.seed)
+            layer.setName('NDFF Vogels (gecategoriseerd)')
+            _build_symbology(layer, self.group_field, self.species_field, self.seed)
         except Exception as e:
             feedback.pushWarning('Symbologie mislukt: {}'.format(e))
 
@@ -113,13 +100,6 @@ class VogelsCategoriserenAlgorithm(QgsProcessingAlgorithm):
     INPUT = 'INPUT'
     CSV = 'CSV'
     PROVINCE = 'PROVINCE'
-    SPECIES_FIELD = 'SPECIES_FIELD'
-    OUTPUT_FIELD = 'OUTPUT_FIELD'
-    DEFAULT_CAT = 'DEFAULT_CAT'
-    CENTROIDS = 'CENTROIDS'
-    SYMBOLIZE = 'SYMBOLIZE'
-    COLOR_MODE = 'COLOR_MODE'
-    SEED = 'SEED'
     OUTPUT = 'OUTPUT'
 
     PROVINCES = [
@@ -127,7 +107,12 @@ class VogelsCategoriserenAlgorithm(QgsProcessingAlgorithm):
         'Groningen', 'Limburg', 'Noord-Brabant', 'Noord-Holland',
         'Overijssel', 'Utrecht', 'Zeeland', 'Zuid-Holland',
     ]
-    COLOR_MODES = ['Willekeurig per soort', 'Eén kleur per categorie', 'Tint per soort binnen categorie']
+
+    # Vaste instellingen
+    SPECIES_FIELD = 'soort_ned'
+    OUTPUT_FIELD = 'ow_cat'
+    DEFAULT_CAT = 'overige'
+    SEED = -1
 
     def tr(self, s):
         return QCoreApplication.translate('Processing', s)
@@ -142,59 +127,39 @@ class VogelsCategoriserenAlgorithm(QgsProcessingAlgorithm):
         return self.tr('NDFF vogels categoriseren + symboliseren')
 
     def group(self):
-        return self.tr('Ecologie')
+        return self.tr('NDFF-analyse')
 
     def groupId(self):
-        return 'ecologie'
+        return 'ndff_analyse'
 
     def shortHelpString(self):
         return self.tr(
             'Maakt zwaartepunten van een NDFF-vogellaag, kent de provinciale '
-            'beschermingscategorie toe uit de lookup-CSV (veld ow_cat, default '
-            '"overige"), en zet er symbologie op. Levert een nieuwe puntlaag op. '
+            'beschermingscategorie toe uit de lookup-CSV, en zet er symbologie op. '
+            'Levert een laag "NDFF Vogels (gecategoriseerd)" op. '
             'Provincies zonder eigen blok vallen terug op Landelijk.'
         )
 
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterFeatureSource(
-            self.INPUT, self.tr('NDFF-vogellaag')))
+            self.INPUT, self.tr('NDFF-vogellaag (vlakken)')))
+        
         self.addParameter(QgsProcessingParameterFile(
-            self.CSV, self.tr('Lookup-CSV (soort;provincie;categorie;peildatum)'),
+            self.CSV, self.tr('Lookup-CSV (soort;provincie;categorie)'),
             extension='csv',
             defaultValue=r'\\server\Mappen\Basis en uitleg QGIS\Toolbox\vogels_categorie_per_provincie.csv'))
+        
         self.addParameter(QgsProcessingParameterEnum(
             self.PROVINCE, self.tr('Provincie van het project'),
             options=self.PROVINCES, defaultValue=0))
-        self.addParameter(QgsProcessingParameterField(
-            self.SPECIES_FIELD, self.tr('Soortveld'),
-            parentLayerParameterName=self.INPUT, defaultValue='soort_ned'))
-        self.addParameter(QgsProcessingParameterString(
-            self.OUTPUT_FIELD, self.tr('Naam categorie-veld'), defaultValue='ow_cat'))
-        self.addParameter(QgsProcessingParameterString(
-            self.DEFAULT_CAT, self.tr('Default voor niet-gevonden soorten'), defaultValue='overige'))
-        self.addParameter(QgsProcessingParameterBoolean(
-            self.CENTROIDS, self.tr('Eerst zwaartepunten maken (invoer = NDFF-vlakken)'), defaultValue=True))
-        self.addParameter(QgsProcessingParameterBoolean(
-            self.SYMBOLIZE, self.tr('Meteen symbologie toepassen'), defaultValue=True))
-        self.addParameter(QgsProcessingParameterEnum(
-            self.COLOR_MODE, self.tr('Kleurmodus'), options=self.COLOR_MODES, defaultValue=0))
-        self.addParameter(QgsProcessingParameterNumber(
-            self.SEED, self.tr('Seed voor willekeur (-1 = elke keer anders)'),
-            type=QgsProcessingParameterNumber.Integer, defaultValue=-1))
+        
         self.addParameter(QgsProcessingParameterFeatureSink(
-            self.OUTPUT, self.tr('Zwaartepunten, gecategoriseerd')))
+            self.OUTPUT, self.tr('Laag opslaan als')))
 
     def processAlgorithm(self, parameters, context, feedback):
         source = self.parameterAsSource(parameters, self.INPUT, context)
         csv_path = self.parameterAsFile(parameters, self.CSV, context)
         prov_idx = self.parameterAsEnum(parameters, self.PROVINCE, context)
-        species_field = self.parameterAsString(parameters, self.SPECIES_FIELD, context)
-        out_field = (self.parameterAsString(parameters, self.OUTPUT_FIELD, context).strip() or 'ow_cat')
-        default_cat = (self.parameterAsString(parameters, self.DEFAULT_CAT, context).strip() or 'overige')
-        make_centroids = self.parameterAsBool(parameters, self.CENTROIDS, context)
-        symbolize = self.parameterAsBool(parameters, self.SYMBOLIZE, context)
-        color_mode = self.parameterAsEnum(parameters, self.COLOR_MODE, context)
-        seed = self.parameterAsInt(parameters, self.SEED, context)
         chosen_prov = self.PROVINCES[prov_idx]
 
         # CSV inlezen
@@ -213,40 +178,46 @@ class VogelsCategoriserenAlgorithm(QgsProcessingAlgorithm):
         if not blocks:
             raise QgsProcessingException('Geen bruikbare regels in de CSV.')
 
+        # Juiste provincieblok kiezen (fallback op Landelijk)
         used_prov = chosen_prov if chosen_prov in blocks else 'Landelijk'
         if used_prov not in blocks:
             raise QgsProcessingException('Geen blok voor {} en geen Landelijk.'.format(chosen_prov))
         lookup = blocks[used_prov]
         if used_prov != chosen_prov:
-            feedback.pushInfo('{} heeft geen eigen blok -> Landelijk gebruikt.'.format(chosen_prov))
+            feedback.pushInfo('{} heeft geen eigen blok → Landelijk gebruikt.'.format(chosen_prov))
         feedback.pushInfo('Provincieblok: {} ({} soorten).'.format(used_prov, len(lookup)))
 
-        # Uitvoervelden = invoervelden + categorie-veld
+        # Uitvoervelden = invoervelden + ow_cat
         out_fields = QgsFields(source.fields())
-        idx = out_fields.indexOf(out_field)
+        idx = out_fields.indexOf(self.OUTPUT_FIELD)
         if idx == -1:
-            out_fields.append(QgsField(out_field, QVariant.String))
-            idx = out_fields.indexOf(out_field)
+            out_fields.append(QgsField(self.OUTPUT_FIELD, QVariant.String))
+            idx = out_fields.indexOf(self.OUTPUT_FIELD)
 
-        out_wkb = QgsWkbTypes.Point if make_centroids else source.wkbType()
+        # Output altijd punten (zwaartepunten van vlakken)
         (sink, dest_id) = self.parameterAsSink(
-            parameters, self.OUTPUT, context, out_fields, out_wkb, source.sourceCrs())
+            parameters, self.OUTPUT, context, out_fields, QgsWkbTypes.Point, source.sourceCrs())
 
         n_match = n_default = 0
         for feat in source.getFeatures():
             geom = feat.geometry()
             if geom is None or geom.isEmpty():
                 continue
-            if make_centroids:
-                geom = geom.centroid()
+            
+            # Maak zwaartepunt
+            geom = geom.centroid()
 
-            sval = feat[species_field]
+            # Zoek soort op in lookup
+            sval = feat[self.SPECIES_FIELD]
             key = '' if sval is None or sval == NULL else str(sval).strip().lower()
             if key and key in lookup:
-                cat = lookup[key]; n_match += 1
+                cat = lookup[key]
+                n_match += 1
             else:
-                cat = default_cat; n_default += 1
+                cat = self.DEFAULT_CAT
+                n_default += 1
 
+            # Bouw output feature
             attrs = list(feat.attributes())
             if len(attrs) < len(out_fields):
                 attrs += [None] * (len(out_fields) - len(attrs))
@@ -258,11 +229,12 @@ class VogelsCategoriserenAlgorithm(QgsProcessingAlgorithm):
             sink.addFeature(nf)
 
         feedback.pushInfo('Gecategoriseerd: {} met categorie, {} als "{}".'.format(
-            n_match, n_default, default_cat))
+            n_match, n_default, self.DEFAULT_CAT))
 
+        # Pas symbologie toe via postProcessor
         details = context.layersToLoadOnCompletion()
-        if symbolize and dest_id in details:
-            self._pp = _Styler(out_field, species_field, color_mode, seed)
+        if dest_id in details:
+            self._pp = _Styler(self.OUTPUT_FIELD, self.SPECIES_FIELD, self.SEED)
             details[dest_id].setPostProcessor(self._pp)
             context.setLayersToLoadOnCompletion(details)
 
